@@ -3,9 +3,11 @@ import CheckGroup from '../components/form/CheckGroup.jsx'
 import SelectField from '../components/form/SelectField.jsx'
 import TextAreaField from '../components/form/TextAreaField.jsx'
 import TextField from '../components/form/TextField.jsx'
+import CredentialsEditor from '../components/CredentialsEditor.jsx'
 import Icon from '../components/Icon.jsx'
 import Modal from '../components/Modal.jsx'
 import { AVAILABILITY, DRIVERS, GENDERS, LANGUAGES, LEVELS, SKILLS, STATUSES } from '../lib/caregivers.js'
+import { EXPERIENCE_GROUPS } from '../lib/criteria.js'
 import { cached, forget } from '../lib/geo.js'
 import { rules, useForm } from '../lib/useForm.js'
 import { useState } from 'react'
@@ -22,6 +24,8 @@ const blank = {
   languages: ['English'],
   availability: [],
   doNotAssign: false,
+  experience: [],
+  credentials: [],
   address: '',
   notes: '',
   source: 'Manual entry',
@@ -86,12 +90,24 @@ export default function CaregiverForm({ initial, onSave, onDelete, onClose }) {
         <CheckGroup className="span-2" legend="Skills" options={SKILLS} value={v.skills} onChange={(x) => f.set('skills', x)} />
         <CheckGroup legend="Languages" options={LANGUAGES} value={v.languages} onChange={(x) => f.set('languages', x)} />
         <CheckGroup legend="Availability" options={AVAILABILITY} value={v.availability} onChange={(x) => f.set('availability', x)} />
+        <CredentialsEditor className="span-2" value={v.credentials} onChange={(x) => f.set('credentials', x)} />
+        <p className="form-note span-2">Experience is matched against each client's CareFinder criteria on the Dispatch page. Level and gender cover the Level and Prefers Male/Female items.</p>
+        {EXPERIENCE_GROUPS.map((g) => (
+          <CheckGroup
+            key={g.id}
+            className="span-2"
+            legend={`Experience: ${g.title}`}
+            options={g.items.map((c) => ({ value: c.id, label: c.label }))}
+            value={v.experience}
+            onChange={(x) => f.set('experience', x)}
+          />
+        ))}
         <TextAreaField className="span-2" label="Notes" value={v.notes} onChange={(e) => f.set('notes', e.target.value)} />
       </form>
       {confirm && (
         <ConfirmDelete
           title="Delete caregiver?"
-          message={`${initial.name} will be removed from the caregiver list. Trips already in the mileage log are kept. You can undo this right after.`}
+          message={`${initial.name} will be removed from the caregiver list. You can undo this right after.`}
           confirmLabel={`Delete ${initial.name}`}
           onCancel={() => setConfirm(false)}
           onConfirm={onDelete}

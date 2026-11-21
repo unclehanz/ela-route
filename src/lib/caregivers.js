@@ -1,3 +1,5 @@
+import { meets, requiredOf } from './criteria.js'
+
 export const STATUSES = [
   'Active',
   'Regular Schedule',
@@ -41,6 +43,7 @@ export function matches(cg, f) {
   if (f.spanish && !cg.languages?.includes('Spanish')) return false
   if (f.overnight && !cg.availability?.includes('Overnight')) return false
   if (f.twelve && !cg.availability?.includes('12-Hour Shift')) return false
+  if (f.useCriteria && f.required?.some((id) => !meets(cg, id))) return false
   return true
 }
 
@@ -52,5 +55,8 @@ export function filtersForClient(client) {
   if (client.needs?.includes('Hospice')) f.hospice = true
   if (client.needs?.includes('Spanish-Speaking')) f.spanish = true
   if (client.needs?.includes('Driver Needed')) f.driver = 'Driver'
+  // The client's Required match criteria (see criteria.js); they can be switched off in the Dispatch filters.
+  f.required = requiredOf(client)
+  f.useCriteria = f.required.length > 0
   return f
 }

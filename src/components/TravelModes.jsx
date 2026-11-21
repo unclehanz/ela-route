@@ -52,12 +52,12 @@ export default function TravelModes({ cg, from, to, drive, driveMiles, trafficLa
       <span>
         <span className="mode-name">Car</span>
         <span className="mode-sub">
-          {drives ? `${fmtMi(driveMiles)} · ${trafficLabel}` : `${cg.driver} — may need a ride`}
+          {drives ? `${fmtMin(drive.typ)} (${fmtRange(drive)}) · ${trafficLabel}` : `${cg.driver} — may need a ride`}
         </span>
       </span>
       <span className="mode-value">
-        {fmtMin(drive.typ)}
-        <small>typically {fmtRange(drive)}</small>
+        {fmtMi(driveMiles)}
+        <small>{drives ? 'driving distance' : fmtMin(drive.typ)}</small>
       </span>
     </li>
   )

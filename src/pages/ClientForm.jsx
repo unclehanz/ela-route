@@ -4,13 +4,14 @@ import CheckGroup from '../components/form/CheckGroup.jsx'
 import SelectField from '../components/form/SelectField.jsx'
 import TextAreaField from '../components/form/TextAreaField.jsx'
 import TextField from '../components/form/TextField.jsx'
+import CriteriaPicker from '../components/CriteriaPicker.jsx'
 import Icon from '../components/Icon.jsx'
 import Modal from '../components/Modal.jsx'
 import { CLIENT_NEEDS, GENDERS } from '../lib/caregivers.js'
 import { cached, forget } from '../lib/geo.js'
 import { rules, useForm } from '../lib/useForm.js'
 
-const blank = { name: '', address: '', careManager: '', genderPreference: '', needs: [], notes: '', phone: '' }
+const blank = { name: '', address: '', careManager: '', genderPreference: '', needs: [], criteria: {}, notes: '', phone: '' }
 
 export default function ClientForm({ initial, careManagers = [], onSave, onDelete, onClose }) {
   const f = useForm({ ...blank, ...initial }, { name: rules.name, address: rules.addressRequired, phone: rules.phone })
@@ -75,12 +76,14 @@ export default function ClientForm({ initial, careManagers = [], onSave, onDelet
         />
         <CheckGroup className="span-2" legend="Care needs" options={CLIENT_NEEDS} value={v.needs} onChange={(x) => f.set('needs', x)} />
         <p className="form-note span-2">Gender preference, Hospice, Spanish-Speaking and Driver Needed narrow the caregiver list on the Dispatch page.</p>
+        <CriteriaPicker className="span-2" value={v.criteria} onChange={(x) => f.set('criteria', x)} />
+        <p className="form-note span-2">Caregivers missing a Required item are left out of Dispatch results (you can switch this off in Filters). Preferred items are counted on each result.</p>
         <TextAreaField className="span-2" label="Notes" value={v.notes} onChange={(e) => f.set('notes', e.target.value)} />
       </form>
       {confirm && (
         <ConfirmDelete
           title="Delete client?"
-          message={`${initial.name} will be removed from the client list. Trips already in the mileage log are kept. You can undo this right after.`}
+          message={`${initial.name} will be removed from the client list. You can undo this right after.`}
           confirmLabel={`Delete ${initial.name}`}
           onCancel={() => setConfirm(false)}
           onConfirm={onDelete}

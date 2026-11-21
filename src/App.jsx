@@ -5,10 +5,11 @@ import CommandPalette from './components/CommandPalette.jsx'
 import Footer from './components/Footer.jsx'
 import Icon from './components/Icon.jsx'
 import Sidebar from './components/Sidebar.jsx'
+import Spinner from './components/Spinner.jsx'
 import { useToast } from './components/Toast.jsx'
 import { APP_NAME, NAV } from './config.js'
 import { locateAll } from './lib/geo.js'
-import { useTheme } from './lib/hooks.js'
+import { useDelayed, useTheme } from './lib/hooks.js'
 import { load, save } from './lib/storage.js'
 import { useStore } from './lib/store.js'
 import CaregiverForm from './pages/CaregiverForm.jsx'
@@ -17,18 +18,17 @@ import ClientForm from './pages/ClientForm.jsx'
 import ClientsPage from './pages/ClientsPage.jsx'
 import DataSettings from './pages/DataSettings.jsx'
 import DispatchPage from './pages/DispatchPage.jsx'
-import MileagePage from './pages/MileagePage.jsx'
-import RoutesPage from './pages/RoutesPage.jsx'
 
 const UI_KEY = 'ela-route:ui:v2'
 
-export default function App({ onSignOut }) {
-  const store = useStore()
-  const { data, upsert, remove } = store
+export default function App({ user, onSignOut }) {
+  const store = useStore(user.uid)
+  const { data, sync, upsert, remove } = store
+  const showLoading = useDelayed(sync.state === 'loading')
   const toast = useToast()
   const [theme, toggleTheme] = useTheme()
   const saved = load(UI_KEY, {})
-  const [page, setPage] = useState(saved.page || 'dispatch')
+  const [page, setPage] = useState(NAV.some((n) => n.id === saved.page) ? saved.page : 'dispatch')
   const [dispatchClientId, setDispatchClientIdState] = useState(saved.clientId || '')
   const [editing, setEditing] = useState(null) // { kind, item }
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -67,7 +67,7 @@ export default function App({ onSignOut }) {
     persist({ clientId: id })
   }
 
-  // Keyboard accelerators: Ctrl/Cmd+K opens quick find, Alt+1..5 switch pages.
+  // Keyboard accelerators: Ctrl/Cmd+K opens quick find, Alt+1..N switch pages.
   useEffect(() => {
     const onKey = (e) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'b') {
@@ -76,7 +76,7 @@ export default function App({ onSignOut }) {
       } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault()
         setPaletteOpen((o) => !o)
-      } else if (e.altKey && !e.ctrlKey && !e.metaKey && /^[1-5]$/.test(e.key)) {
+      } else if (e.altKey && !e.ctrlKey && !e.metaKey && NAV[+e.key - 1]) {
         e.preventDefault()
         navigate(NAV[+e.key - 1].id)
       }
@@ -84,6 +84,14 @@ export default function App({ onSignOut }) {
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   })
+
+  // Tell the user when a save to the cloud fails (changes stay on this device until it works).
+  const syncMessage = sync.state === 'error' && !sync.fatal ? sync.message : ''
+  useEffect(() => {
+    if (syncMessage)
+      toast({ title: 'Changes not saved to the cloud yet', details: syncMessage, tone: 'danger', actions: [{ label: 'Try again', primary: true, onClick: store.retrySync }] })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [syncMessage])
 
   // Optional: quietly locate any address not on the map yet, so searches are instant.
   const bg = !!data.settings.backgroundLocate
@@ -190,8 +198,30 @@ export default function App({ onSignOut }) {
           </button>
         </header>
 
-        <main id="main" key={page} className={'content content-' + page}>
-          {page === 'dispatch' && (
+        <main id="main" key={page} className={'content content-' + page} aria-busy={sync.state === 'loading'}>
+          {sync.state === 'loading' && (
+            <div className="app-status">
+              {showLoading && (
+                <p className="status-line">
+                  <Spinner size={14} /> Loading your data…
+                </p>
+              )}
+            </div>
+          )}
+          {sync.fatal && (
+            <div className="app-status">
+              <div className="callout callout-danger" role="alert">
+                <Icon name="alert" size={18} />
+                <p>
+                  {sync.message}{' '}
+                  <button type="button" className="btn-link" onClick={() => window.location.reload()}>
+                    Reload
+                  </button>
+                </p>
+              </div>
+            </div>
+          )}
+          {sync.state !== 'loading' && !sync.fatal && page === 'dispatch' && (
             <DispatchPage
               key={dispatchClientId}
               store={store}
@@ -204,14 +234,12 @@ export default function App({ onSignOut }) {
               onRoutePanelChange={handleRoutePanel}
             />
           )}
-          {page === 'caregivers' && (
+          {sync.state !== 'loading' && !sync.fatal && page === 'caregivers' && (
             <CaregiversPage store={store} onView={(item) => setEditing({ kind: 'caregiver', item })} onAdd={() => setEditing({ kind: 'caregiver', item: null })} />
           )}
-          {page === 'clients' && (
+          {sync.state !== 'loading' && !sync.fatal && page === 'clients' && (
             <ClientsPage store={store} onView={(item) => setEditing({ kind: 'client', item })} onAdd={() => setEditing({ kind: 'client', item: null })} />
           )}
-          {page === 'routes' && <RoutesPage store={store} onNavigate={navigate} />}
-          {page === 'mileage' && <MileagePage store={store} />}
         </main>
 
         <Footer />
@@ -239,7 +267,7 @@ export default function App({ onSignOut }) {
       {paletteOpen && (
         <CommandPalette caregivers={data.caregivers} clients={data.clients} onClose={() => setPaletteOpen(false)} onRun={runCommand} />
       )}
-      {settingsOpen && <DataSettings store={store} onClose={() => setSettingsOpen(false)} onNavigate={navigate} />}
+      {settingsOpen && <DataSettings store={store} user={user} onClose={() => setSettingsOpen(false)} onNavigate={navigate} />}
     </div>
   )
 }

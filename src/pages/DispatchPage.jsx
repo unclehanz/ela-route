@@ -12,17 +12,18 @@ import Spinner from '../components/Spinner.jsx'
 import StatusBadge from '../components/StatusBadge.jsx'
 import { useToast } from '../components/Toast.jsx'
 import { CONTACT_OUTCOMES, filtersForClient, matches } from '../lib/caregivers.js'
-import { fmtDate, fmtMi, fmtMin, fmtMoney, fmtRange, today } from '../lib/format.js'
+import { fit, preferredOf } from '../lib/criteria.js'
+import { fmtDate, fmtMi, fmtMin } from '../lib/format.js'
 import { cached, currentTraffic, driveTimes, eta, geocode, guessMiles, located, milesBetween, route, TRAFFIC, useGeoVersion, zipCentroids, zipOf } from '../lib/geo.js'
 import { useDelayed } from '../lib/hooks.js'
 import ImportButton from '../components/ImportButton.jsx'
 
-function RoutePanel({ info, traffic, trafficLabel, isBest, roundTrip, setRoundTrip, onLog, onOpen, onClose }) {
+function RoutePanel({ info, traffic, trafficLabel, isBest, onOpen, onClose }) {
   const e = eta(info.minutes, traffic)
   return (
     <aside className="route-panel" aria-label="Route details">
       <header className="route-panel-head">
-        <p className="eyebrow">{isBest ? 'Fastest caregiver' : 'Selected caregiver'}</p>
+        <p className="eyebrow">{isBest ? 'Nearest caregiver' : 'Selected caregiver'}</p>
         <button type="button" className="btn-icon" onClick={onClose} aria-label="Close route details">
           <Icon name="x" size={18} />
         </button>
@@ -38,18 +39,8 @@ function RoutePanel({ info, traffic, trafficLabel, isBest, roundTrip, setRoundTr
         </p>
         <CaregiverTags cg={info.cg} />
         <TravelModes cg={info.cg} from={info.from} to={info.to} drive={e} driveMiles={info.miles} trafficLabel={trafficLabel} />
-        <div className="route-panel-actions">
-          <label className={'toggle-chip' + (roundTrip ? ' is-on' : '')}>
-            <input type="checkbox" checked={roundTrip} onChange={(ev) => setRoundTrip(ev.target.checked)} />
-            {roundTrip && <Icon name="check" size={14} />}
-            Round trip
-          </label>
-          <button type="button" className="btn btn-primary grow" onClick={onLog}>
-            <Icon name="receipt" size={16} /> Log to mileage
-          </button>
-        </div>
         {info.cg.phone && (
-          <a className="btn btn-secondary btn-block" href={`tel:${info.cg.phone}`}>
+          <a className="btn btn-primary btn-block" href={`tel:${info.cg.phone}`}>
             <Icon name="phone" size={16} /> Call {info.cg.phone}
           </a>
         )}
@@ -87,7 +78,6 @@ export default function DispatchPage({ store, clientId, setClientId, onEditClien
   const [selected, setSelected] = useState(null)
   const [routeInfo, setRouteInfo] = useState(null)
   const [routeLoading, setRouteLoading] = useState(false)
-  const [roundTrip, setRoundTrip] = useState(true)
   const runId = useRef(0)
   const search = useRef(null) // { run, cpos, pool, total } for the search in progress
   const userPicked = useRef(false)
@@ -141,7 +131,7 @@ export default function DispatchPage({ store, clientId, setClientId, onEditClien
       if (run !== runId.current) return
       const list = nearest
         .map((x, i) => ({ ...x, miles: drive[i]?.miles ?? null, minutes: drive[i]?.minutes ?? null }))
-        .sort((a, b) => (a.minutes ?? 1e9) - (b.minutes ?? 1e9))
+        .sort((a, b) => (a.miles ?? 1e9) - (b.miles ?? 1e9))
       setResults({ list, pool: sr.pool.length, unlocated: sr.pool.filter((c) => cached(c.address)?.fail).length, remaining })
       setPhase(remaining ? { kind: 'refine', done: sr.total - remaining, total: sr.total } : null)
       // Follow the current best caregiver until the user picks one themselves.
@@ -214,29 +204,6 @@ export default function DispatchPage({ store, clientId, setClientId, onEditClien
     toast({ title: `Contact logged: ${outcome}`, details: `${cg.name} for ${client.name}` })
   }
 
-  function logTrip() {
-    const mult = roundTrip ? 2 : 1
-    const miles = +(routeInfo.miles * mult).toFixed(1)
-    addMany('mileage', [
-      {
-        date: today(),
-        caregiverId: routeInfo.cg.id,
-        clientId,
-        from: routeInfo.cg.address,
-        to: client.address,
-        miles,
-        minutes: Math.round(eta(routeInfo.minutes, traffic).typ * mult),
-        roundTrip,
-        purpose: 'Client visit',
-      },
-    ])
-    toast({
-      title: `Trip logged for ${routeInfo.cg.name}`,
-      details: `${fmtDate(today())} · ${client.name} · ${fmtMi(miles)}${roundTrip ? ' round trip' : ''} · ${fmtMoney(miles * (data.settings.ratePerMile ?? 0.7))}`,
-      actions: [{ label: 'View mileage log', primary: true, onClick: () => onNavigate('mileage') }],
-    })
-  }
-
   const markers = []
   if (clientPos) markers.push({ id: 'client', kind: 'client', ...clientPos, label: client.name, permanent: true })
   results?.list.slice(0, 25).forEach((r, i) =>
@@ -246,14 +213,16 @@ export default function DispatchPage({ store, clientId, setClientId, onEditClien
       ...r.pos,
       rank: i + 1,
       selected: r.cg.id === selected,
-      label: `${String(i + 1).padStart(2, '0')} ${r.cg.name} · ${fmtMin(eta(r.minutes, traffic)?.typ)}`,
-      permanent: i < 5 || r.cg.id === selected, // top 5 always show name + ETA
+      label: `${String(i + 1).padStart(2, '0')} ${r.cg.name} · ${fmtMi(r.miles)}`,
+      permanent: i < 5 || r.cg.id === selected, // top 5 always show name + miles
     }),
   )
   const busy = phase?.kind === 'route'
   const showSkeleton = useDelayed(busy && !results)
   const activeFilterCount =
-    ['level', 'gender', 'driver', 'search'].filter((k) => filters[k]).length + ['hospice', 'spanish', 'overnight', 'twelve'].filter((k) => filters[k]).length
+    ['level', 'gender', 'driver', 'search'].filter((k) => filters[k]).length +
+    ['hospice', 'spanish', 'overnight', 'twelve', 'useCriteria'].filter((k) => filters[k]).length
+  const required = filters.required || []
 
   return (
     <div className={'console' + (routeInfo && results ? ' has-panel' : '')}>
@@ -286,9 +255,15 @@ export default function DispatchPage({ store, clientId, setClientId, onEditClien
                 </p>
               </div>
             ))}
-          {client && (client.careManager || client.genderPreference || client.needs?.length > 0) && (
+          {client && (client.careManager || client.genderPreference || client.needs?.length > 0 || Object.keys(client.criteria || {}).length > 0) && (
             <p className="client-needs">
-              {[client.careManager && `CM ${client.careManager}`, client.genderPreference && `${client.genderPreference} caregiver`, ...(client.needs || [])]
+              {[
+                client.careManager && `CM ${client.careManager}`,
+                client.genderPreference && `${client.genderPreference} caregiver`,
+                ...(client.needs || []),
+                required.length > 0 && `${required.length} required criteria`,
+                preferredOf(client).length > 0 && `${preferredOf(client).length} preferred`,
+              ]
                 .filter(Boolean)
                 .join(' · ')}
             </p>
@@ -306,6 +281,13 @@ export default function DispatchPage({ store, clientId, setClientId, onEditClien
               <div className="rail-row">
                 <Popover label={`Filters${activeFilterCount ? ` · ${activeFilterCount}` : ''}`} align="left" width={320}>
                   <FilterBar filters={filters} setFilters={setFilters} stacked />
+                  {required.length > 0 && (
+                    <label className={'toggle-chip align-start' + (filters.useCriteria ? ' is-on' : '')}>
+                      <input type="checkbox" checked={!!filters.useCriteria} onChange={(e) => setFilters({ ...filters, useCriteria: e.target.checked })} />
+                      {filters.useCriteria && <Icon name="check" size={14} />}
+                      Only caregivers who meet all {required.length} required criteria
+                    </label>
+                  )}
                 </Popover>
                 <button type="button" className="btn btn-primary grow" disabled={!client.address || busy} onClick={findNearest}>
                   {busy ? <Spinner size={14} /> : <Icon name={results ? 'refresh' : 'search'} size={16} />}
@@ -339,12 +321,12 @@ export default function DispatchPage({ store, clientId, setClientId, onEditClien
         <div className="rail-results" aria-busy={busy}>
           {!data.caregivers.length && !data.clients.length && (
             <EmptyState icon="upload" title="Import your spreadsheet to start" action={<ImportButton store={store} primary onDone={onNavigate} />}>
-              Choose the OPEN SHIFT .xlsx file. It’s read inside this browser and never uploaded.
+              Choose the OPEN SHIFT .xlsx file. The file is read in this browser; the caregivers and clients in it are saved to your account.
             </EmptyState>
           )}
           {!client && (data.caregivers.length > 0 || data.clients.length > 0) && (
             <EmptyState icon="pin" title="Pick a client">
-              Caregivers get ranked by drive time to them. {data.clients.filter((c) => c.address).length}/{data.clients.length} clients have an address.
+              Caregivers get ranked by driving distance to them. {data.clients.filter((c) => c.address).length}/{data.clients.length} clients have an address.
             </EmptyState>
           )}
           {showSkeleton && !results && (
@@ -364,7 +346,7 @@ export default function DispatchPage({ store, clientId, setClientId, onEditClien
           )}
           {client && !results && !busy && (
             <EmptyState icon="search" title={client.address ? 'Ready to search' : 'Address needed'}>
-              {client.address ? 'Matching caregivers will be ranked by drive time.' : 'Drive times need the street address of the client.'}
+              {client.address ? 'Matching caregivers will be ranked by driving distance.' : 'Driving distance needs the street address of the client.'}
             </EmptyState>
           )}
           {results && !results.list.length && results.remaining > 0 && (
@@ -392,6 +374,7 @@ export default function DispatchPage({ store, clientId, setClientId, onEditClien
                   const sheet = data.sheetDistances?.[r.cg.id]?.[clientId]
                   const contact = lastContact[r.cg.id]
                   const sel = r.cg.id === selected
+                  const f = fit(r.cg, client)
                   return (
                     <li key={r.cg.id} className={'result' + (sel ? ' is-selected' : '')} style={{ '--i': Math.min(i, 12) }}>
                       <button type="button" className="result-main" onClick={() => showRoute(r)} aria-pressed={sel}>
@@ -403,6 +386,13 @@ export default function DispatchPage({ store, clientId, setClientId, onEditClien
                             <CaregiverTags cg={r.cg} />
                           </span>
                           {r.cg.notes && <span className="result-note">{r.cg.notes}</span>}
+                          {(f.preferredTotal > 0 || f.missing.length > 0) && (
+                            <span className="result-meta">
+                              {f.preferredTotal > 0 && `Preferred ${f.preferredMet}/${f.preferredTotal}`}
+                              {f.preferredTotal > 0 && f.missing.length > 0 && ' · '}
+                              {f.missing.length > 0 && <span className="text-danger">Missing {f.missing.length} required</span>}
+                            </span>
+                          )}
                           {(sheet || contact) && (
                             <span className="result-meta">
                               {sheet && `Sheet ${sheet[0] != null ? fmtMi(sheet[0]) : ''}${sheet[1] ? ` — ${sheet[1]}` : ''}`}
@@ -412,9 +402,8 @@ export default function DispatchPage({ store, clientId, setClientId, onEditClien
                           )}
                         </span>
                         <span className="result-figures num">
-                          <strong>{fmtMin(eta(r.minutes, traffic)?.typ)}</strong>
-                          <span>{fmtMi(r.miles)}</span>
-                          <span className="result-range">{fmtRange(eta(r.minutes, traffic))}</span>
+                          <strong>{fmtMi(r.miles)}</strong>
+                          <span>{fmtMin(eta(r.minutes, traffic)?.typ)}</span>
                         </span>
                       </button>
                       <div className="result-actions">
@@ -464,9 +453,6 @@ export default function DispatchPage({ store, clientId, setClientId, onEditClien
           traffic={traffic}
           trafficLabel={t.label}
           isBest={routeInfo.cg.id === results.list[0]?.cg.id}
-          roundTrip={roundTrip}
-          setRoundTrip={setRoundTrip}
-          onLog={logTrip}
           onOpen={() => onViewCaregiver(routeInfo.cg)}
           onClose={() => setRouteInfo(null)}
         />

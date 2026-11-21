@@ -10,11 +10,12 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "fflate": "^0.8.2",
+    "firebase": "^13.4.0",
     "leaflet": "^1.9.4",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
-    "react-leaflet": "^5.0.0",
-    "fflate": "^0.8.2"
+    "react-leaflet": "^5.0.0"
   },
   "devDependencies": {
     "@types/react": "^19.3.0",

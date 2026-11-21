@@ -1,39 +1,42 @@
-// Sign-in gate for the static site.
-// IMPORTANT: on a static site (GitHub Pages) this check runs in the visitor's browser, so it keeps casual visitors out
-// but is NOT real security — anyone technical can bypass it. That is why the site ships with no personal data:
-// caregiver/client data only exists in the browser of whoever imported it.
-// Only a SHA-256 fingerprint of "username + password" is stored here, never the password itself.
-const CREDENTIAL_HASH = '646732cf5431787040ea7081ec9fbeeb5410adadf127738e918ca35d08af52a1'
-const SALT = 'ela-route:v1'
-const SESSION_KEY = 'ela-route:session'
+// Sign-in with Firebase Authentication (email + password).
+// Accounts are created by an admin in the Firebase console (Authentication → Users); there is no self sign-up.
+import { onAuthStateChanged, sendPasswordResetEmail, signInWithEmailAndPassword, signOut } from 'firebase/auth'
+import { clearIndexedDbPersistence, terminate } from 'firebase/firestore'
+import { auth, db } from './firebase.js'
 
-async function sha256(text) {
-  const bytes = new TextEncoder().encode(text)
-  const digest = await crypto.subtle.digest('SHA-256', bytes)
-  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('')
-}
+/** Calls `cb(user | null)` now and whenever the signed-in user changes. Returns an unsubscribe function. */
+export const watchUser = (cb) => onAuthStateChanged(auth, cb)
 
-export async function checkCredentials(username, password) {
-  const hash = await sha256(`${SALT}\n${username.trim().toLowerCase()}\n${password}`)
-  // Small fixed delay so every attempt takes the same time, right or wrong.
-  await new Promise((r) => setTimeout(r, 400))
-  return hash === CREDENTIAL_HASH
-}
-
-// The session lasts until the browser tab is closed.
-export function isSignedIn() {
+/** Resolves { ok } or { ok: false, reason: 'credentials' | 'throttled' | 'network' }. */
+export async function signIn(email, password) {
   try {
-    return sessionStorage.getItem(SESSION_KEY) === CREDENTIAL_HASH
-  } catch {
-    return false
+    await signInWithEmailAndPassword(auth, email.trim(), password)
+    return { ok: true }
+  } catch (e) {
+    if (e.code === 'auth/too-many-requests') return { ok: false, reason: 'throttled' }
+    if (e.code === 'auth/network-request-failed') return { ok: false, reason: 'network' }
+    // Wrong password, unknown email and disabled accounts all look the same to the user.
+    return { ok: false, reason: 'credentials' }
   }
 }
 
-export function setSignedIn(on) {
+/** Sends a reset link if the account exists. Never reveals whether it does. */
+export async function sendReset(email) {
   try {
-    if (on) sessionStorage.setItem(SESSION_KEY, CREDENTIAL_HASH)
-    else sessionStorage.removeItem(SESSION_KEY)
-  } catch {
-    /* storage blocked: the user simply signs in again next time */
+    await sendPasswordResetEmail(auth, email.trim())
+  } catch (e) {
+    if (e.code === 'auth/network-request-failed') return { ok: false, reason: 'network' }
+  }
+  return { ok: true }
+}
+
+/** Signs out and wipes this device's offline copy of the data, then reloads to a clean sign-in screen. */
+export async function signOutUser() {
+  try {
+    await signOut(auth)
+    await terminate(db)
+    await clearIndexedDbPersistence(db)
+  } finally {
+    window.location.reload()
   }
 }

@@ -6,9 +6,16 @@ import Modal from '../components/Modal.jsx'
 import { useToast } from '../components/Toast.jsx'
 import { downloadFile } from '../lib/files.js'
 import { fmtDate, today } from '../lib/format.js'
+import CsvMenu from '../components/CsvMenu.jsx'
 import ImportButton from '../components/ImportButton.jsx'
 
-export default function DataSettings({ store, onClose, onNavigate }) {
+const SYNC_TEXT = {
+  saved: 'All changes are saved to your account.',
+  saving: 'Saving changes…',
+  loading: 'Loading your data…',
+}
+
+export default function DataSettings({ store, user, onClose, onNavigate }) {
   const toast = useToast()
   const fileRef = useRef(null)
   const [confirmReset, setConfirmReset] = useState(false)
@@ -20,7 +27,7 @@ export default function DataSettings({ store, onClose, onNavigate }) {
     downloadFile(name, JSON.stringify(data, null, 1), 'application/json')
     toast({
       title: `Backup saved as ${name}`,
-      details: `${data.caregivers.length} caregivers · ${data.clients.length} clients · ${data.mileage.length} trips`,
+      details: `${data.caregivers.length} caregivers · ${data.clients.length} clients · ${data.contacts.length} contact notes`,
     })
   }
 
@@ -36,7 +43,7 @@ export default function DataSettings({ store, onClose, onNavigate }) {
       onClose()
       toast({
         title: `Restored from ${file.name}`,
-        details: `${obj.caregivers.length} caregivers · ${obj.clients.length} clients · ${obj.mileage?.length || 0} trips`,
+        details: `${obj.caregivers.length} caregivers · ${obj.clients.length} clients`,
         actions: [{ label: 'View caregivers', primary: true, onClick: () => onNavigate('caregivers') }],
       })
     } catch {
@@ -47,20 +54,51 @@ export default function DataSettings({ store, onClose, onNavigate }) {
   return (
     <Modal title="Data & settings" onClose={onClose}>
       <section className="settings-section">
+        <h3>Account</h3>
+        <p className="text-muted">
+          Signed in as <strong>{user.email}</strong>. Your data is saved to your account and syncs to every device you sign in on.
+        </p>
+        <p className={store.sync.state === 'error' ? 'text-danger' : 'text-muted'} role="status">
+          {store.sync.state === 'error' ? (
+            <>
+              <Icon name="alert" size={16} /> {store.sync.message}{' '}
+              <button type="button" className="btn-link" onClick={store.retrySync}>
+                Try again
+              </button>
+            </>
+          ) : (
+            SYNC_TEXT[store.sync.state]
+          )}
+        </p>
+      </section>
+
+      <section className="settings-section">
         <h3>Spreadsheet</h3>
         <p className="text-muted">
           {data.importInfo
             ? `Last imported: ${data.importInfo.source}, ${fmtDate(data.importInfo.importedAt)}.`
             : 'No spreadsheet imported yet.'}{' '}
-          The file is read inside this browser — nothing is uploaded. Re-importing adds new people and fills blanks; your edits are kept.
+          The file is read in this browser; the caregivers and clients in it are saved to your account. Re-importing adds new people and fills blanks; your edits are kept.
         </p>
         <ImportButton store={store} onDone={(p) => (onClose(), onNavigate(p))} />
       </section>
 
       <section className="settings-section">
+        <h3>CSV files</h3>
+        <p className="text-muted">
+          Add or update caregivers and clients in bulk: download the template, fill in one person per row (Excel or Google Sheets, saved as CSV), then
+          import it. People are matched by name: new ones are added and existing ones only get their blanks filled. Export gives you the same columns.
+        </p>
+        <div className="btn-row">
+          <CsvMenu kind="caregivers" label="Caregivers CSV" store={store} onDone={(p) => (onClose(), onNavigate(p))} />
+          <CsvMenu kind="clients" label="Clients CSV" store={store} onDone={(p) => (onClose(), onNavigate(p))} />
+        </div>
+      </section>
+
+      <section className="settings-section">
         <h3>Backup</h3>
         <p className="text-muted">
-          Your changes are saved in this browser only. Download a backup regularly, and restore it on another computer if needed.
+          A copy you keep yourself. Restoring replaces everything in your account with the backup.
         </p>
         <div className="btn-row">
           <button type="button" className="btn btn-secondary" onClick={backup}>
@@ -123,29 +161,29 @@ export default function DataSettings({ store, onClose, onNavigate }) {
 
       <section className="settings-section">
         <h3>Start over</h3>
-        <p className="text-muted">Removes all caregivers, clients, trips and contact notes from this browser. Settings are kept.</p>
+        <p className="text-muted">Removes all caregivers, clients and contact notes from your account, on every device. Settings are kept.</p>
         <button type="button" className="btn btn-ghost-danger" onClick={() => setConfirmReset(true)}>
-          <Icon name="trash" size={18} /> Clear all data on this device
+          <Icon name="trash" size={18} /> Clear all data
         </button>
       </section>
 
       <p className="fine-print">
         Maps and routing use OpenStreetMap, Nominatim, Photon, OSRM and the FOSSGIS walking router (free public services). Addresses are sent to them to be placed on the map,
-        once per address; route lookups send map points only. Drive times are estimates from typical traffic, not live traffic.
+        once per address; route lookups send map points only. Your caregiver and client records are stored in Firebase (Google Cloud), visible only to your account. Drive times are estimates from typical traffic, not live traffic.
         The transit and map links open Google or Apple Maps with the two map points.
       </p>
 
       {confirmReset && (
         <ConfirmDialog
           title="Clear all data?"
-          message={`This erases ${data.caregivers.length} caregivers, ${data.clients.length} clients, ${data.mileage.length} logged trips and ${data.contacts.length} contact notes from this browser. It can't be undone — download a backup first if you might need them.`}
+          message={`This erases ${data.caregivers.length} caregivers, ${data.clients.length} clients and ${data.contacts.length} contact notes from your account, on every device. It can't be undone — download a backup first if you might need them.`}
           confirmLabel="Erase everything"
           onCancel={() => setConfirmReset(false)}
           onConfirm={() => {
             store.clearAll()
             setConfirmReset(false)
             onClose()
-            toast({ title: 'All data cleared from this browser', details: 'Import the spreadsheet or restore a backup to start again.', tone: 'info' })
+            toast({ title: 'All data cleared from your account', details: 'Import the spreadsheet or restore a backup to start again.', tone: 'info' })
           }}
         />
       )}

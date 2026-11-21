@@ -5,8 +5,6 @@ export const NAV = [
   { id: 'dispatch', label: 'Dispatch', title: 'Dispatch', icon: 'pin' },
   { id: 'caregivers', label: 'Caregivers', title: 'Caregivers', icon: 'users' },
   { id: 'clients', label: 'Clients', title: 'Clients', icon: 'home' },
-  { id: 'routes', label: 'Routes', title: 'Route planner', icon: 'route' },
-  { id: 'mileage', label: 'Mileage', title: 'Mileage log', icon: 'receipt' },
 ]
 
 export const FOOTER = {

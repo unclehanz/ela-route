@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import CsvMenu from '../components/CsvMenu.jsx'
 import DataTable from '../components/DataTable.jsx'
 import EmptyState from '../components/EmptyState.jsx'
 import TextField from '../components/form/TextField.jsx'
@@ -68,6 +69,7 @@ export default function ClientsPage({ store, onView, onAdd }) {
         title="Clients"
         subtitle={missing ? `${plural(data.clients.length, 'client')} · ${missing} still need an address` : `${plural(data.clients.length, 'client')}`}
       >
+        <CsvMenu kind="clients" store={store} />
         <button type="button" className="btn btn-primary" onClick={onAdd}>
           <Icon name="plus" size={18} /> Add client
         </button>

@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import CsvMenu from '../components/CsvMenu.jsx'
 import CaregiverTags from '../components/CaregiverTags.jsx'
 import DataTable from '../components/DataTable.jsx'
 import EmptyState from '../components/EmptyState.jsx'
@@ -65,6 +66,7 @@ export default function CaregiversPage({ store, onView, onAdd }) {
             <Icon name="pin" size={18} /> Locate {plural(notLocated, 'address', 'addresses')}
           </button>
         )}
+        <CsvMenu kind="caregivers" store={store} />
         <button type="button" className="btn btn-primary" onClick={onAdd}>
           <Icon name="plus" size={18} /> Add caregiver
         </button>

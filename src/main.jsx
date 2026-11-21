@@ -1,10 +1,13 @@
-import { StrictMode, useState } from 'react'
+import { StrictMode, useEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
 import './App.css'
 import App from './App.jsx'
+import Spinner from './components/Spinner.jsx'
 import { ToastProvider } from './components/Toast.jsx'
-import { isSignedIn, setSignedIn } from './lib/auth.js'
+import { signOutUser, watchUser } from './lib/auth.js'
+import { firebaseConfigured } from './lib/firebase.js'
+import { useDelayed } from './lib/hooks.js'
 import { load } from './lib/storage.js'
 import SignIn from './pages/SignIn.jsx'
 
@@ -13,16 +16,22 @@ document.documentElement.dataset.theme =
   load('ela-route:theme') || (window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
 
 function Root() {
-  const [signedIn, setSignedInState] = useState(isSignedIn)
-  if (!signedIn) return <SignIn onSignedIn={() => setSignedInState(true)} />
-  return (
-    <App
-      onSignOut={() => {
-        setSignedIn(false)
-        setSignedInState(false)
-      }}
-    />
-  )
+  const [user, setUser] = useState(firebaseConfigured ? undefined : null) // undefined = still checking
+  useEffect(() => (firebaseConfigured ? watchUser(setUser) : undefined), [])
+  const showSpinner = useDelayed(user === undefined)
+
+  if (user === undefined)
+    return (
+      <div className="app-status" aria-busy="true">
+        {showSpinner && (
+          <p className="status-line">
+            <Spinner size={14} /> Checking sign-in…
+          </p>
+        )}
+      </div>
+    )
+  if (!user) return <SignIn />
+  return <App key={user.uid} user={user} onSignOut={signOutUser} />
 }
 
 createRoot(document.getElementById('root')).render(

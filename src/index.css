@@ -2,20 +2,20 @@
 :root {
   color-scheme: light;
   /* Brand */
-  --brand-primary: #0078d7;
-  --brand-primary-dark: #1c61a1;
-  --brand-primary-deep: #20476e;
+  --brand-primary: #c2185b;
+  --brand-primary-dark: #ad1457;
+  --brand-primary-deep: #880e4f;
   /* Surfaces */
   --background-soft: #f0f0f0;
   --surface-base: #ffffff;
   --surface-elevated: #ffffff;
-  --surface-alt-row: #f0f8ff;
+  --surface-alt-row: #fff0f6;
   --border-divider: #dcdcdc;
   --border-input: #7a8594;
   /* Text */
   --text-primary: #1f2933;
   --text-muted: #5b6672;
-  --accent-text: #0078d7;
+  --accent-text: #c2185b;
   /* Status */
   --success: #28a745;
   --warning: #ffc107;
@@ -26,16 +26,16 @@
   --warning-text: #8a6100;
   --danger-text: #b8312f;
   /* Added tints (backgrounds for badges, callouts and selected items; same hues as the core scheme) */
-  --brand-tint: #e8f2fc;
+  --brand-tint: #fce8f1;
   --success-tint: #e8f6eb;
   --warning-tint: #fff6da;
   --danger-tint: #fbeaea;
-  --neutral-tint: #eef1f4;
+  --neutral-tint: #f4eef1;
   --map-neutral: #5b6672; /* unranked map markers */
   --tooltip-bg: #1f2933;
   --tooltip-text: #ffffff;
   /* Gradients (backgrounds only) */
-  --bg-gradient-soft: linear-gradient(180deg, #f0f8ff 0%, #d9ecfb 100%);
+  --bg-gradient-soft: linear-gradient(180deg, #fff0f6 0%, #fbd9e8 100%);
   /* Shape & space */
   --r-4: 4px;
   --r-8: 8px;
@@ -78,27 +78,27 @@
   --background-soft: #121212;
   --surface-base: #1e1e1e;
   --surface-elevated: #2a2a2a;
-  --surface-alt-row: #262c34;
-  --border-divider: #3b4048;
+  --surface-alt-row: #2e2629;
+  --border-divider: #463b40;
   --border-input: #7a7f87;
   --text-primary: #e0e0e0;
   --text-muted: #a6a6a6;
-  --accent-text: #5da2e0;
+  --accent-text: #f48fb1;
   --success: #4ab163;
   --warning: #e6b520;
   --danger: #e38683;
   --success-text: #4ab163;
   --warning-text: #e6b520;
   --danger-text: #e38683;
-  --brand-tint: #1b2a3a;
+  --brand-tint: #3a1b2a;
   --success-tint: #1d2f22;
   --warning-tint: #362f1c;
   --danger-tint: #3a2423;
-  --neutral-tint: #2c3138;
+  --neutral-tint: #332c30;
   --map-neutral: #8c96a3;
   --tooltip-bg: #e0e0e0;
   --tooltip-text: #1f2933;
-  --bg-gradient-soft: linear-gradient(180deg, #121212 0%, #0f1b2a 100%);
+  --bg-gradient-soft: linear-gradient(180deg, #121212 0%, #2a0f1d 100%);
   --shadow-pop: 0 12px 32px -8px rgba(0, 0, 0, 0.7);
 }
 
