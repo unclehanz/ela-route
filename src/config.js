@@ -8,7 +8,7 @@ export const NAV = [
 ]
 
 export const FOOTER = {
-  poweredBy: 'Qtech Business Solution',
+  poweredBy: 'Tap-it',
   email: 'wecare@qtechbsi.com',
   mobile: { label: '09175603284', tel: '+639175603284' },
   telephone: { label: '042 731 7462', tel: '+63427317462' },
