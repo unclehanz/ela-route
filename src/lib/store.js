@@ -1,15 +1,18 @@
-import { collection, doc, onSnapshot, serverTimestamp, writeBatch } from 'firebase/firestore'
+import { collection, doc, getDocs, onSnapshot, runTransaction, serverTimestamp } from 'firebase/firestore'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { db } from './firebase.js'
 import { load, uid } from './storage.js'
 
-// Data before Firebase lived in localStorage under this key. It is uploaded once to an empty account, then removed.
+// Data before Firebase lived in localStorage under this key. It is folded into the team data once, then removed.
 const LEGACY_KEY = 'ela-route:data:v1'
 
-// The app ships with no personal data. Caregivers and clients come from importing the spreadsheet or the caregiver
-// CSV in the browser, or from the forms, and are saved to the signed-in user's Firestore space:
-//   users/{uid}/sections/{caregivers | clients | contacts | sheetDistances | meta}  →  { value, updatedAt }
-// One document per section keeps reads cheap (5 per load) and each well under Firestore's 1 MB document limit.
+// The app ships with no personal data. Caregivers and clients come from importing the spreadsheet or the CSVs in the
+// browser, or from the forms. Everyone who signs in shares one team pool and can change it:
+//   teams/main/sections/{caregivers | clients | contacts | sheetDistances | meta}  →  { value, updatedAt, updatedBy }
+// Each person's own settings stay with their account:
+//   users/{uid}/sections/prefs  →  { value, updatedAt, updatedBy }
+// One document per section keeps reads cheap and each well under Firestore's 1 MB document limit.
+const TEAM = 'main'
 const fresh = () => ({
   caregivers: [],
   clients: [],
@@ -19,11 +22,61 @@ const fresh = () => ({
   settings: { candidates: 40 },
 })
 
-const SECTIONS = ['caregivers', 'clients', 'contacts', 'sheetDistances', 'meta']
-const sectionOf = (d, s) => (s === 'meta' ? { importInfo: d.importInfo ?? null, settings: d.settings } : d[s])
+// section → whose it is: the shared 'team' pool or the signed-in 'user'
+const SECTIONS = { caregivers: 'team', clients: 'team', contacts: 'team', sheetDistances: 'team', meta: 'team', prefs: 'user' }
+const TEAM_SECTIONS = Object.keys(SECTIONS).filter((s) => SECTIONS[s] === 'team')
+const KINDS = ['team', 'user']
+const sectionRef = (userId, s) => (SECTIONS[s] === 'team' ? doc(db, 'teams', TEAM, 'sections', s) : doc(db, 'users', userId, 'sections', s))
+const kindRef = (userId, kind) => (kind === 'team' ? collection(db, 'teams', TEAM, 'sections') : collection(db, 'users', userId, 'sections'))
+const sectionOf = (d, s) => (s === 'meta' ? { importInfo: d.importInfo ?? null } : s === 'prefs' ? d.settings : d[s])
 const withSection = (d, s, v) =>
-  s === 'meta' ? { ...d, importInfo: v?.importInfo ?? null, settings: { ...fresh().settings, ...v?.settings } } : { ...d, [s]: v ?? fresh()[s] }
+  s === 'meta'
+    ? { ...d, importInfo: v?.importInfo ?? null }
+    : s === 'prefs'
+      ? { ...d, settings: { ...fresh().settings, ...v } }
+      : { ...d, [s]: v ?? fresh()[s] }
 const MAX_SECTION = 950_000 // bytes; Firestore rejects documents over 1 MiB
+const str = (v) => JSON.stringify(v ?? null)
+const tooLarge = (s) => Object.assign(new Error(`The ${s} list is too large to save in one piece. Delete unused records.`), { code: 'too-large' })
+
+const isObj = (v) => v != null && typeof v === 'object' && !Array.isArray(v)
+const isIdList = (v) => Array.isArray(v) && v.every((x) => isObj(x) && x.id)
+
+/**
+ * Three-way merge: apply what changed on this device (base → local) on top of what is on the server now (remote).
+ * Lists of records merge by id and objects by key, so two people editing different caregivers — or different fields
+ * of the same one — both keep their changes. When both changed the same value, this device's change wins.
+ */
+export function merge3(base, local, remote) {
+  if (str(local) === str(base)) return remote
+  if (str(remote) === str(base) || str(local) === str(remote)) return local
+  if ((base == null || isIdList(base)) && isIdList(local) && isIdList(remote)) {
+    const b = new Map((base || []).map((x) => [x.id, x]))
+    const l = new Map(local.map((x) => [x.id, x]))
+    const r = new Set(remote.map((x) => x.id))
+    const out = []
+    for (const item of remote) {
+      if (l.has(item.id)) out.push(merge3(b.get(item.id), l.get(item.id), item))
+      else if (!b.has(item.id)) out.push(item) // added elsewhere
+      // else: deleted here
+    }
+    for (const item of local) {
+      if (r.has(item.id)) continue
+      // Added here, or edited here after someone else deleted it.
+      if (!b.has(item.id) || str(item) !== str(b.get(item.id))) out.push(item)
+    }
+    return out
+  }
+  if (isObj(local) && isObj(remote) && (base == null || isObj(base))) {
+    const out = {}
+    for (const k of new Set([...Object.keys(base || {}), ...Object.keys(local), ...Object.keys(remote)])) {
+      const v = merge3(base?.[k], local[k], remote[k])
+      if (v !== undefined) out[k] = v
+    }
+    return out
+  }
+  return local
+}
 
 const nameKey = (s) => (s || '').toLowerCase().replace(/["'“”]/g, '').replace(/\s+/g, ' ').trim()
 const isEmpty = (v) =>
@@ -58,6 +111,7 @@ function mergeList(existing, incoming, prefix, kind, stats, idMap) {
       idMap[item.id] = id
       out.push({ ...item, id })
       byName.set(nameKey(item.name), { ...item, id })
+      index.set(id, out.length - 1)
       stats[kind + 'Added']++
     }
   }
@@ -81,15 +135,78 @@ export function mergeWorkbook(data, parsed) {
   }
 }
 
-function syncError(err) {
-  if (err?.code === 'permission-denied') return 'Your account isn’t allowed to save data. Ask the admin to check the Firestore rules.'
-  if (err?.code === 'resource-exhausted') return 'Firebase’s free daily limit is used up. Changes stay on this device and sync tomorrow.'
-  if (err?.code === 'too-large') return err.message
-  return 'Couldn’t save to the cloud. Changes are kept on this device; check the connection and try again.'
+/**
+ * Fold one account's earlier data into the team data (same name matching as an import; the team's values win).
+ * Contact notes and spreadsheet distances follow the people they belong to.
+ */
+function mergeData(team, mine) {
+  const stats = { caregiversAdded: 0, caregiversUpdated: 0, clientsAdded: 0, clientsUpdated: 0 }
+  const idMap = {}
+  const caregivers = mergeList(team.caregivers, mine.caregivers || [], 'cg', 'caregivers', stats, idMap)
+  const clients = mergeList(team.clients, mine.clients || [], 'cl', 'clients', stats, idMap)
+  const seen = new Set(team.contacts.map((c) => c.id))
+  const contacts = [...team.contacts]
+  for (const c of mine.contacts || []) {
+    const id = c.id && !seen.has(c.id) ? c.id : uid('co')
+    seen.add(id)
+    contacts.push({ ...c, id, caregiverId: idMap[c.caregiverId] ?? c.caregiverId, clientId: idMap[c.clientId] ?? c.clientId })
+  }
+  const sheetDistances = structuredClone(team.sheetDistances)
+  for (const [cg, row] of Object.entries(mine.sheetDistances || {})) {
+    const to = (sheetDistances[idMap[cg] ?? cg] ||= {})
+    for (const [cl, v] of Object.entries(row)) to[idMap[cl] ?? cl] ??= v
+  }
+  return { ...team, caregivers, clients, contacts, sheetDistances, importInfo: team.importInfo ?? mine.importInfo ?? null }
 }
 
 /**
- * App data for one signed-in user, kept in memory and synced with Firestore.
+ * Before sharing, each account had its own data under users/{uid}/sections (and before Firebase, in localStorage).
+ * Move whatever this account still has into the team pool and delete the old copy, in one transaction.
+ */
+async function adoptOldData(userId) {
+  const old = {}
+  for (const d of (await getDocs(kindRef(userId, 'user'))).docs) old[d.id] = d.data().value
+  const legacy = load(LEGACY_KEY)
+  const sources = []
+  if (TEAM_SECTIONS.some((s) => s in old)) sources.push({ ...old, importInfo: old.meta?.importInfo ?? null })
+  if (legacy?.caregivers) sources.push(legacy)
+  if (!sources.length) return
+  await runTransaction(db, async (tx) => {
+    const snaps = await Promise.all(TEAM_SECTIONS.map((s) => tx.get(sectionRef(userId, s))))
+    let team = fresh()
+    snaps.forEach((snap, i) => {
+      if (snap.exists()) team = withSection(team, TEAM_SECTIONS[i], snap.data().value)
+    })
+    const merged = sources.reduce(mergeData, team)
+    const stamp = { updatedAt: serverTimestamp(), updatedBy: userId }
+    for (const s of TEAM_SECTIONS) {
+      const v = sectionOf(merged, s)
+      if (str(v) === str(sectionOf(team, s))) continue
+      if (str(v).length > MAX_SECTION) throw tooLarge(s)
+      tx.set(sectionRef(userId, s), { value: v, ...stamp })
+    }
+    for (const s of Object.keys(old)) if (s !== 'prefs') tx.delete(doc(db, 'users', userId, 'sections', s))
+    const settings = old.meta?.settings ?? legacy?.settings
+    if (settings && !old.prefs) tx.set(sectionRef(userId, 'prefs'), { value: settings, ...stamp })
+  })
+  if (legacy) {
+    try {
+      localStorage.removeItem(LEGACY_KEY)
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+function syncError(err) {
+  if (err?.code === 'permission-denied') return 'Your account isn’t allowed to save data. Ask the admin to publish the latest Firestore rules.'
+  if (err?.code === 'resource-exhausted') return 'Firebase’s free daily limit is used up. Changes are kept in this window; try again tomorrow.'
+  if (err?.code === 'too-large') return err.message
+  return 'Couldn’t save to the cloud. Changes are kept in this window (keep it open); check the connection and try again.'
+}
+
+/**
+ * The team's shared data plus this user's settings, kept in memory and synced with Firestore.
  * `sync.state`: 'loading' (first read) · 'saved' · 'saving' · 'error' (with `message`).
  */
 export function useStore(userId) {
@@ -97,96 +214,130 @@ export function useStore(userId) {
   const [sync, setSync] = useState({ state: 'loading' })
   const latest = useRef(data)
   const synced = useRef({}) // section → JSON last read from / written to Firestore
-  const loaded = useRef(false)
-  const migrating = useRef(false)
+  const loaded = useRef({ team: false, user: false })
   const timer = useRef(null)
-  const inFlight = useRef(0)
+  const running = useRef(false)
+  const again = useRef(false)
+  const flushRef = useRef(null)
+  const ready = () => loaded.current.team && loaded.current.user
 
-  // Live read: first snapshot loads everything; later ones bring in changes made on other devices.
+  // Live read: the first snapshots load everything; later ones bring in changes made by teammates and other devices.
+  // Changes made here that aren't saved yet are merged on top, so neither side's edit is lost.
   useEffect(() => {
-    loaded.current = false
+    loaded.current = { team: false, user: false }
     synced.current = {}
-    return onSnapshot(
-      collection(db, 'users', userId, 'sections'),
-      { includeMetadataChanges: true },
-      (snap) => {
-        // An empty answer from the offline cache only means this device hasn't downloaded anything yet.
-        // Wait for the server, or a first edit here would overwrite the account's data.
-        if (!loaded.current && snap.empty && snap.metadata.fromCache) return
-        let next = latest.current
-        for (const ch of snap.docChanges()) {
-          const s = ch.doc.id
-          if (!SECTIONS.includes(s) || ch.doc.metadata.hasPendingWrites) continue
-          const v = ch.type === 'removed' ? undefined : ch.doc.data().value
-          const json = JSON.stringify(v ?? null)
-          if (json === synced.current[s]) continue
-          synced.current[s] = json
-          next = withSection(next, s, v)
-        }
-        if (!loaded.current) {
-          loaded.current = true
-          const legacy = snap.empty && load(LEGACY_KEY)
-          if (legacy?.caregivers) {
-            migrating.current = true
-            next = { ...fresh(), ...legacy, settings: { ...fresh().settings, ...legacy.settings } }
-            delete next.mileage
+    let stop = []
+    let cancelled = false
+    const listen = (kind) =>
+      onSnapshot(
+        kindRef(userId, kind),
+        { includeMetadataChanges: true },
+        (snap) => {
+          // An empty answer from the offline cache only means this device hasn't downloaded anything yet.
+          // Wait for the server, or a first edit here would overwrite the team's data.
+          if (!loaded.current[kind] && snap.empty && snap.metadata.fromCache) return
+          let next = latest.current
+          for (const ch of snap.docChanges()) {
+            const s = ch.doc.id
+            if (SECTIONS[s] !== kind || ch.doc.metadata.hasPendingWrites) continue
+            const remote = ch.type === 'removed' ? undefined : ch.doc.data().value
+            const json = str(remote)
+            if (json === synced.current[s]) continue
+            const local = sectionOf(next, s)
+            const dirty = loaded.current[kind] && str(local) !== synced.current[s]
+            const merged = dirty ? merge3(JSON.parse(synced.current[s] ?? 'null'), local, remote) : remote
+            synced.current[s] = json
+            next = withSection(next, s, merged)
           }
-          setSync({ state: 'saved' })
+          if (!loaded.current[kind]) {
+            loaded.current[kind] = true
+            // Sections that don't exist yet count as saved in their empty form.
+            for (const s of Object.keys(SECTIONS)) if (SECTIONS[s] === kind) synced.current[s] ??= str(sectionOf(next, s))
+            if (ready()) setSync({ state: 'saved' })
+          }
+          if (next !== latest.current) {
+            latest.current = next
+            setData(next)
+          }
+        },
+        (err) => setSync({ state: 'error', message: syncError(err), fatal: !ready() }),
+      )
+    adoptOldData(userId)
+      .catch((err) => console.warn('Couldn’t move this account’s earlier data into the team data; will retry at next sign-in.', err))
+      .then(() => {
+        if (!cancelled) stop = KINDS.map(listen)
+      })
+    return () => {
+      cancelled = true
+      stop.forEach((fn) => fn())
+    }
+  }, [userId])
+
+  /**
+   * Save every section that differs from what Firestore has. Runs as a transaction that reads the server's current
+   * copy and merges this device's changes into it, so two people saving at the same moment don't overwrite each other.
+   */
+  const flush = useCallback(() => {
+    clearTimeout(timer.current)
+    if (!ready()) return
+    if (running.current) {
+      again.current = true
+      return
+    }
+    const pending = Object.keys(SECTIONS).filter((s) => str(sectionOf(latest.current, s)) !== synced.current[s])
+    if (!pending.length) return
+    running.current = true
+    setSync({ state: 'saving' })
+    let used
+    runTransaction(db, async (tx) => {
+      const snaps = await Promise.all(pending.map((s) => tx.get(sectionRef(userId, s))))
+      used = {}
+      const out = {}
+      pending.forEach((s, i) => {
+        const local = sectionOf(latest.current, s)
+        const remote = snaps[i].exists() ? snaps[i].data().value : undefined
+        const merged = str(remote) === synced.current[s] ? local : merge3(JSON.parse(synced.current[s] ?? 'null'), local, remote)
+        if (str(merged).length > MAX_SECTION) throw tooLarge(s)
+        used[s] = local
+        out[s] = merged ?? null
+        tx.set(sectionRef(userId, s), { value: merged ?? null, updatedAt: serverTimestamp(), updatedBy: userId })
+      })
+      return out
+    }).then(
+      (out) => {
+        running.current = false
+        let next = latest.current
+        for (const [s, v] of Object.entries(out)) {
+          synced.current[s] = str(v)
+          // Keep anything typed while the save was in flight.
+          next = withSection(next, s, merge3(used[s], sectionOf(next, s), v))
         }
         if (next !== latest.current) {
           latest.current = next
           setData(next)
         }
-      },
-      (err) => setSync({ state: 'error', message: syncError(err), fatal: !loaded.current }),
-    )
-  }, [userId])
-
-  /** Write every section that differs from what Firestore has, in one batch. */
-  const flush = useCallback(() => {
-    clearTimeout(timer.current)
-    if (!loaded.current) return
-    const d = latest.current
-    const batch = writeBatch(db)
-    const written = []
-    for (const s of SECTIONS) {
-      const json = JSON.stringify(sectionOf(d, s) ?? null)
-      if (json === synced.current[s]) continue
-      if (json.length > MAX_SECTION) {
-        setSync({ state: 'error', message: syncError({ code: 'too-large', message: `The ${s} list is too large to save in one piece. Delete unused records.` }) })
-        continue
-      }
-      written.push([s, synced.current[s]])
-      synced.current[s] = json
-      batch.set(doc(db, 'users', userId, 'sections', s), { value: JSON.parse(json), updatedAt: serverTimestamp() })
-    }
-    if (!written.length) return
-    inFlight.current++
-    setSync({ state: 'saving' })
-    batch.commit().then(
-      () => {
-        if (--inFlight.current === 0) setSync({ state: 'saved' })
-        if (migrating.current) {
-          migrating.current = false
-          try {
-            localStorage.removeItem(LEGACY_KEY)
-          } catch {
-            /* ignore */
-          }
+        setSync({ state: 'saved' })
+        if (again.current) {
+          again.current = false
+          flushRef.current()
         }
       },
       (err) => {
-        inFlight.current--
-        for (const [s, prev] of written) if (synced.current[s] === JSON.stringify(sectionOf(latest.current, s) ?? null)) synced.current[s] = prev
+        running.current = false
+        again.current = false
         setSync({ state: 'error', message: syncError(err) })
       },
     )
   }, [userId])
 
-  // Save shortly after each change (batched), and right away when the tab is hidden or closed.
+  useEffect(() => {
+    flushRef.current = flush
+  }, [flush])
+
+  // Save shortly after each change, right away when the tab is hidden, and again when the connection comes back.
   useEffect(() => {
     latest.current = data
-    if (!loaded.current) return
+    if (!ready()) return
     clearTimeout(timer.current)
     timer.current = setTimeout(flush, 500)
   }, [data, flush])
@@ -194,9 +345,11 @@ export function useStore(userId) {
     const now = () => document.visibilityState === 'hidden' && flush()
     document.addEventListener('visibilitychange', now)
     window.addEventListener('pagehide', flush)
+    window.addEventListener('online', flush)
     return () => {
       document.removeEventListener('visibilitychange', now)
       window.removeEventListener('pagehide', flush)
+      window.removeEventListener('online', flush)
     }
   }, [flush])
 
@@ -221,9 +374,11 @@ export function useStore(userId) {
   const setSettings = useCallback((patch) => setData((d) => ({ ...d, settings: { ...d.settings, ...patch } })), [])
   const clearAll = useCallback(() => setData((d) => ({ ...fresh(), settings: d.settings })), [])
   const replaceAll = useCallback((obj) => {
-    const next = { ...fresh(), ...obj }
-    delete next.mileage
-    setData(next)
+    setData((d) => {
+      const next = { ...fresh(), ...obj, settings: { ...d.settings, ...obj.settings } }
+      delete next.mileage
+      return next
+    })
   }, [])
 
   /** Import a parsed workbook; returns counts of what changed. */

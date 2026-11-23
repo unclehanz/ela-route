@@ -321,7 +321,7 @@ export default function DispatchPage({ store, clientId, setClientId, onEditClien
         <div className="rail-results" aria-busy={busy}>
           {!data.caregivers.length && !data.clients.length && (
             <EmptyState icon="upload" title="Import your spreadsheet to start" action={<ImportButton store={store} primary onDone={onNavigate} />}>
-              Choose the OPEN SHIFT .xlsx file. The file is read in this browser; the caregivers and clients in it are saved to your account.
+              Choose the OPEN SHIFT .xlsx file. The file is read in this browser; the caregivers and clients in it are added to the team’s shared data.
             </EmptyState>
           )}
           {!client && (data.caregivers.length > 0 || data.clients.length > 0) && (

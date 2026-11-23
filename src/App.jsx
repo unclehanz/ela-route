@@ -203,7 +203,7 @@ export default function App({ user, onSignOut }) {
             <div className="app-status">
               {showLoading && (
                 <p className="status-line">
-                  <Spinner size={14} /> Loading your data…
+                  <Spinner size={14} /> Loading team data…
                 </p>
               )}
             </div>

@@ -17,12 +17,13 @@ and shows car / transit / walking options.
   - Clients: match criteria go in *Required Criteria* and *Preferred Criteria* by name (e.g. `Cooking; Level 3 Service`).
     `G-Tube` exists twice, so write `G-Tube (Certifications)` or `G-Tube (Other/Misc)`.
   - Each template comes with an `…-allowed-values.csv` listing what every column accepts. Rows starting with `EXAMPLE` are skipped.
-- **Data syncs** to your Firebase account, so it's the same on every computer you sign in on. Signing out also clears
+- **Data is shared by the whole team:** everyone who signs in sees and can change the same caregivers, clients and
+  contact notes, and changes show up for everyone right away. Personal settings stay with each account. Signing out also clears
   this device's offline copy.
 
 ### Things to know
-- If the browser had data from before Firebase (localStorage), it is uploaded once on first sign-in to an empty
-  account, then removed from the browser.
+- Data saved before sharing (per account in Firestore, or in the browser's localStorage) is merged into the team
+  data on that person's next sign-in, matching people by name, then the old copy is removed.
 - Commits use the GitHub no-reply email (`222508882+unclehanz@users.noreply.github.com`).
 - On this computer the project lives on `D:`, which doesn't record file ownership, so Git refuses to run there until
   you allow the folder once:
@@ -30,8 +31,10 @@ and shows car / transit / walking options.
 
 ## Data and privacy
 - The site itself contains **no personal data**. Caregiver/client records live in Firestore under
-  `users/{uid}/sections/*`; `firestore.rules` lets each signed-in user read and write only their own data.
-- Each account has its own data (accounts don't share records).
+  `teams/main/sections/*`, which every signed-in account can read and write; each person's settings are in
+  `users/{uid}/sections/prefs`, private to them (see `firestore.rules`). Only accounts the admin creates can sign in.
+- Saves merge with what's on the server, so two people editing at once (even the same caregiver, different fields)
+  both keep their changes; if both change the same field, the later save wins.
 - Maps and routing use free public services (OpenStreetMap, Nominatim, Photon, OSRM, FOSSGIS). Addresses are sent to
   them once to be placed on the map; route lookups send map points only.
 

@@ -1,14 +1,29 @@
 rules_version = '2';
 
-// Each signed-in user can read and write only their own data: users/{uid}/sections/{section}.
+// Everyone who can sign in (accounts are created by the admin in the Firebase console) shares one team pool of
+// caregivers, clients and contact notes, and can read and change all of it: teams/main/sections/{section}.
+// Each user's own settings live in users/{uid}/sections/prefs, readable and writable only by that user.
+// The user may also read and delete their older per-account sections, which the app moves into the team pool.
 // Everything else is closed.
 service cloud.firestore {
   match /databases/{database}/documents {
-    match /users/{uid}/sections/{section} {
-      allow read: if request.auth != null && request.auth.uid == uid;
-      allow write: if request.auth != null && request.auth.uid == uid
+    function signedIn() {
+      return request.auth != null;
+    }
+    function validSection() {
+      return request.resource.data.keys().hasOnly(['value', 'updatedAt', 'updatedBy'])
+        && request.resource.data.updatedBy == request.auth.uid;
+    }
+
+    match /teams/{team}/sections/{section} {
+      allow read: if signedIn() && team == 'main';
+      allow create, update: if signedIn() && team == 'main'
         && section in ['caregivers', 'clients', 'contacts', 'sheetDistances', 'meta']
-        && request.resource.data.keys().hasOnly(['value', 'updatedAt']);
+        && validSection();
+    }
+    match /users/{uid}/sections/{section} {
+      allow read, delete: if signedIn() && request.auth.uid == uid;
+      allow create, update: if signedIn() && request.auth.uid == uid && section == 'prefs' && validSection();
     }
     match /{document=**} {
       allow read, write: if false;
